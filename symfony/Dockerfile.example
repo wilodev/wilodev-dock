@@ -1,0 +1,108 @@
+# =================================================================
+# DOCKERFILE PARA PROYECTOS SYMFONY
+# =================================================================
+# Este Dockerfile construye una imagen con PHP-FPM, Node.js y las
+# dependencias necesarias para ejecutar aplicaciones Symfony.
+# =================================================================
+
+# ----- IMAGEN BASE -----
+# Usa PHP-FPM con la versión especificada en las variables de entorno
+FROM php:${PHP_VERSION}-fpm
+
+# ----- ARGUMENTOS -----
+# Variables que pueden personalizarse durante la construcción
+ARG NODE_VERSION=${NODE_VERSION}  # Versión de Node.js a instalar
+ARG USER_ID=1000                  # ID del usuario no-root (coincide con el usuario del host)
+ARG GROUP_ID=1000                 # ID del grupo no-root (coincide con el grupo del host)
+
+# ----- INSTALACIÓN DE DEPENDENCIAS -----
+# Instala las dependencias del sistema necesarias para Symfony
+RUN apt-get update && apt-get install -y \
+    # Git para descargar dependencias y Composer
+    git \
+    # Utilidades para descargar y descomprimir archivos
+    curl \
+    wget \
+    unzip \
+    # Bibliotecas para procesamiento de imágenes
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    # Soporte para diferentes formatos de archivos
+    libzip-dev \
+    zip \
+    # Intl para internacionalización en Symfony
+    libicu-dev \
+    # Cliente de PostgreSQL (alternativo a MySQL)
+    postgresql-client \
+    # SSL y TLS para conexiones seguras
+    libssl-dev \
+    # Eliminación de datos temporales para reducir el tamaño de la imagen
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ----- CONFIGURACIÓN DE PHP -----
+# Instala y habilita extensiones PHP necesarias para Symfony
+RUN docker-php-ext-configure \
+    # Configura GD con soporte para freetype, jpeg y png
+    gd --with-freetype --with-jpeg \
+    # Configura intl para internacionalización
+    && docker-php-ext-install -j$(nproc) \
+    # PDO para conexiones a bases de datos
+    pdo \
+    pdo_mysql \
+    pdo_pgsql \
+    # Soporte para procesamiento de imágenes
+    gd \
+    # Extensiones adicionales requeridas por Symfony
+    opcache \
+    intl \
+    zip \
+    calendar \
+    # Extensión para conexiones a Redis
+    && pecl install redis \
+    && docker-php-ext-enable redis
+
+# ----- INSTALACIÓN DE COMPOSER -----
+# Instala Composer para gestionar dependencias PHP
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+# Ajusta la configuración de Composer para que pueda ejecutarse como root
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+# ----- INSTALACIÓN DE NODE.JS -----
+# Descarga e instala Node.js para compilar assets con Webpack Encore
+RUN curl -sL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y nodejs \
+    # Instala Yarn para gestión de dependencias JavaScript
+    && npm install -g yarn
+
+# ----- CONFIGURACIÓN DE USUARIO -----
+# Crea un usuario no-root para mejorar la seguridad
+RUN groupadd --gid ${GROUP_ID} symfony \
+    && useradd --uid ${USER_ID} --gid symfony --shell /bin/bash --create-home symfony
+
+# ----- DIRECTORIO DE TRABAJO -----
+# Establece el directorio principal de la aplicación
+WORKDIR /var/www/html
+
+# ----- VOLÚMENES -----
+# Define la ruta que se montará desde el host
+VOLUME /var/www/html
+
+# ----- CONFIGURACIÓN DE PHP ADICIONAL -----
+# Copia configuración personalizada de PHP
+COPY php.ini /usr/local/etc/php/conf.d/custom.ini
+
+# ----- CAMBIO DE USUARIO -----
+# Usa el usuario no-root para aumentar seguridad (opcional)
+# Comentado por defecto para compatibilidad con diferentes flujos de trabajo
+# USER symfony
+
+# ----- COMANDO POR DEFECTO -----
+# Define el comando que se ejecuta al iniciar el contenedor
+CMD ["php-fpm"]
+
+# ----- HEALTHCHECK -----
+# Verifica que PHP-FPM esté respondiendo correctamente
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD php-fpm -t || exit 1

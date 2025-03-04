@@ -1,0 +1,420 @@
+# =================================================================
+# Configuración de Middlewares de Traefik
+# Versión: 1.0.0
+# Última actualización: 2025-03-02
+# =================================================================
+# Los middlewares son componentes que procesan las solicitudes HTTP
+# antes de que lleguen al servicio o después de que el servicio envíe
+# una respuesta. Funcionan como una capa intermedia para modificar,
+# filtrar o asegurar el tráfico.
+# 
+# Documentación oficial: https://doc.traefik.io/traefik/middlewares/overview/
+# =================================================================
+
+http:
+  middlewares:
+    # =====================================================
+    # MIDDLEWARE: AUTENTICACIÓN BÁSICA
+    # =====================================================
+    # Propósito: Protege rutas con autenticación usuario/contraseña
+    # Uso típico: Dashboards administrativos, APIs internas
+    # Impacto en rendimiento: Bajo - verificación simple por solicitud
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/basicauth/
+    # -----------------------------------------------------
+    ${AUTH_MIDDLEWARE_NAME}:
+      basicAuth:
+      # Las credenciales se configuran desde variables de entorno
+      # Formato: usuario:contraseña-encriptada
+      users:
+        - "${TRAEFIK_DASHBOARD_AUTH}"
+      # Mensaje personalizado mostrado en el diálogo de autenticación
+      realm: "${AUTH_REALM}"
+      # Cuando true, elimina el encabezado Authorization de la solicitud
+      # al backend. Útil para evitar filtración de credenciales.
+      removeHeader: false
+      # Nombre del encabezado que contiene el usuario autenticado
+      # Se pasa al backend para identificación/seguimiento
+      headerField: "X-WebAuth-User"
+
+    # =====================================================
+    # MIDDLEWARE: COMPRESIÓN HTTP
+    # =====================================================
+    # Propósito: Comprime respuestas para reducir el ancho de banda
+    # Uso típico: Contenido textual (HTML, CSS, JS, JSON)
+    # Impacto en rendimiento: 
+    #   - Reduce tráfico de red (70-90% para texto)
+    #   - Aumenta ligeramente uso de CPU en el servidor
+    #   - Mejora velocidad percibida por el usuario
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/compress/
+    # -----------------------------------------------------
+    ${COMPRESS_MIDDLEWARE_NAME}:
+      compress:
+        # Tipos de contenido que NO se comprimirán
+        # Las imágenes y archivos comprimidos ya están optimizados
+        excludedContentTypes:
+          - "image/png"    # Imágenes PNG ya comprimidas
+          - "image/jpeg"   # Imágenes JPEG ya comprimidas
+          - "image/gif"    # Imágenes GIF ya comprimidas
+          - "application/zip"    # Archivos ZIP ya comprimidos
+          - "application/gzip"   # Archivos GZIP ya comprimidos
+        # Solo comprime respuestas mayores a este tamaño (en bytes)
+        # Los archivos pequeños no se benefician significativamente
+        # 1024 bytes = 1KB
+        minResponseBodyBytes: 1024
+
+    # =====================================================
+    # MIDDLEWARE: CABECERAS DE SEGURIDAD
+    # =====================================================
+    # Propósito: Añade cabeceras HTTP para mejorar la seguridad
+    # Uso típico: Todas las aplicaciones web públicas
+    # Impacto en rendimiento: Mínimo - solo añade texto a cabeceras
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/headers/
+    # -----------------------------------------------------
+    ${SECURITY_HEADERS_MIDDLEWARE_NAME}:
+      headers:
+        # === HTTP Strict Transport Security (HSTS) ===
+        # Indica a los navegadores que SOLO se debe acceder al sitio por HTTPS
+        forceSTSHeader: true
+        # Duración en segundos que el navegador recordará que el sitio solo debe
+        # accederse mediante HTTPS (31536000 = 1 año)
+        stsSeconds: ${HSTS_SECONDS}
+        # Si se incluyen subdominios en la política HSTS
+        stsIncludeSubdomains: ${HSTS_INCLUDE_SUBDOMAINS}
+        # Si se incluye en la lista de precarga HSTS de navegadores
+        # https://hstspreload.org/
+        stsPreload: ${HSTS_PRELOAD}
+        
+        # === Protección contra ataques comunes ===
+        # Controla cómo otros sitios pueden mostrar tu contenido en frames
+        # Valores: DENY, SAMEORIGIN, ALLOW-FROM https://example.com
+        customFrameOptionsValue: "${FRAME_OPTIONS_VALUE}"
+        # Activa la protección XSS integrada en navegadores modernos
+        browserXssFilter: ${XSS_FILTER}
+        # Evita que el navegador intente "adivinar" el tipo MIME
+        contentTypeNosniff: true
+        
+        # === Cabeceras de seguridad personalizadas ===
+        customResponseHeaders:
+          # Controla qué información se envía cuando los usuarios hacen clic en enlaces
+          # Valores comunes: no-referrer, origin, strict-origin-when-cross-origin
+          Referrer-Policy: "${REFERRER_POLICY}"
+          
+          # Evita el MIME sniffing (también configurado arriba)
+          X-Content-Type-Options: "nosniff"
+          
+          # Controla cómo se puede mostrar la página en frames (también configurado arriba)
+          X-Frame-Options: "${FRAME_OPTIONS_VALUE}"
+          
+          # Configuración de protección XSS (Cross-Site Scripting)
+          # "1; mode=block" - Bloquea la página si detecta un ataque XSS
+          X-XSS-Protection: "1; mode=block"
+          
+          # Controla qué características del navegador puede usar el sitio
+          # Ejemplos: geolocalización, cámara, micrófono, etc.
+          Feature-Policy: "${FEATURE_POLICY}"
+          
+          # Versión más nueva de Feature-Policy (reemplazándola gradualmente)
+          Permissions-Policy: "${PERMISSIONS_POLICY}"
+          
+          # Cabecera HSTS completa (combina las configuraciones de arriba)
+          # max-age=<seconds> - Tiempo que el navegador recordará usar HTTPS
+          # includeSubDomains - Aplica a todos los subdominios
+          # preload - Incluye el dominio en listas de precarga de navegadores
+          Strict-Transport-Security: "max-age=${HSTS_SECONDS}; includeSubDomains; preload"
+          
+          # Evita que el navegador almacene en caché información sensible
+          Cache-Control: "no-store, no-cache, must-revalidate"
+          
+          # Elimina la cabecera que revela información del servidor
+          X-Powered-By: ""
+
+        # === Configuraciones adicionales ===
+        # Fuerza redirección a HTTPS
+        sslRedirect: true
+        # Cabeceras que contienen el host original para proxies
+        hostsProxyHeaders:
+          - "X-Forwarded-Host"
+            
+        # === Content Security Policy (CSP) ===
+        # Controla qué recursos puede cargar el navegador y de dónde
+        # Mejora sustancialmente la seguridad contra XSS
+        # Documentación: https://developer.mozilla.org/docs/Web/HTTP/CSP
+        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'"
+    
+    # =====================================================
+    # MIDDLEWARE: CONTROL DE TASA DE PETICIONES
+    # =====================================================
+    # Propósito: Limita el número de solicitudes por periodo de tiempo
+    # Uso típico: Protección contra ataques DDoS, scraping agresivo, abuse
+    # Impacto en rendimiento: 
+    #   - Bajo en operación normal (solo contador en memoria)
+    #   - Protege en casos de sobrecarga
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/ratelimit/
+    # -----------------------------------------------------
+    ${RATE_LIMIT_MIDDLEWARE_NAME}:
+      rateLimit:
+        # Promedio de solicitudes permitidas por periodo
+        # Ej: 100 solicitudes por segundo en promedio
+        average: ${RATE_LIMIT_AVERAGE}
+        
+        # Periodo de tiempo para calcular la media de solicitudes
+        # Valores comunes: 1s, 1m, 1h (segundo, minuto, hora)
+        period: ${RATE_LIMIT_PERIOD}
+        
+        # Número máximo de solicitudes permitidas en ráfaga
+        # Permite picos temporales por encima del promedio
+        burst: ${RATE_LIMIT_BURST}
+        
+        # Criterio para identificar la fuente de las solicitudes
+        sourceCriterion:
+          # Estrategia basada en IP para identificar clientes
+          ipStrategy:
+            # Profundidad de búsqueda en cabeceras X-Forwarded-For
+            # 0: usa IP remota, 1+: busca en la cabecera a esa profundidad
+            depth: 1
+            
+            # IPs a excluir del límite de tasa (ej: servidores internos)
+            excludedIPs:
+              - "127.0.0.1/32"  # Localhost siempre excluido
+              - "${TRAEFIK_TRUSTED_IPS}"  # IPs de confianza definidas en .env
+
+    # =====================================================
+    # MIDDLEWARE: REDIRECCIÓN A HTTPS
+    # =====================================================
+    # Propósito: Redirige solicitudes HTTP a HTTPS
+    # Uso típico: Garantizar conexiones seguras en toda la aplicación
+    # Impacto en rendimiento: Mínimo - solo una redirección HTTP 301/302
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/redirectscheme/
+    # -----------------------------------------------------
+    ${HTTPS_REDIRECT_MIDDLEWARE_NAME}:
+      redirectScheme:
+        # Esquema al que se redirigirá (https)
+        scheme: "https"
+        
+        # Si la redirección es permanente (301) o temporal (302)
+        # true=301 (permanente): mejor para SEO y rendimiento
+        # false=302 (temporal): útil durante pruebas/migraciones
+        permanent: ${HTTPS_REDIRECT_PERMANENT}
+        
+        # Puerto de destino para la redirección
+        port: "${HTTPS_PORT}"
+
+    # =====================================================
+    # MIDDLEWARE: CONFIGURACIÓN CORS
+    # =====================================================
+    # Propósito: Habilita compartir recursos entre orígenes (dominios) distintos
+    # Uso típico: APIs consumidas por aplicaciones frontend en otros dominios
+    # Impacto en rendimiento: Bajo - solo añade cabeceras HTTP
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/headers/#cors
+    # -----------------------------------------------------
+    ${CORS_MIDDLEWARE_NAME}:
+      headers:
+        # Métodos HTTP permitidos para solicitudes cross-origin
+        # GET/HEAD son seguros, POST/PUT/DELETE pueden modificar datos
+        accessControlAllowMethods:
+          - "${CORS_ALLOWED_METHODS}"
+        
+        # Cabeceras HTTP permitidas en solicitudes cross-origin
+        # Content-Type: Tipo de contenido enviado
+        # Authorization: Credenciales de autenticación
+        # X-Requested-With: Identificador común para solicitudes AJAX
+        accessControlAllowHeaders:
+          - "${CORS_ALLOWED_HEADERS}"
+        
+        # Lista de orígenes (dominios) permitidos
+        # '*' permitiría cualquier origen (menos seguro)
+        # Configuración específica por dominio (más segura)
+        accessControlAllowOriginList:
+          # Subdominio dinámico basado en configuración
+          - "https://*.${TRAEFIK_SUBDOMAIN}.${DOMAIN_BASE}"
+          # Orígenes adicionales configurados en .env
+          - "${ADDITIONAL_ALLOWED_ORIGINS}"
+        
+        # Tiempo máximo (en segundos) que el navegador puede cachear la respuesta CORS
+        # Valores más altos mejoran rendimiento, valores más bajos permiten cambios más rápidos
+        accessControlMaxAge: ${CORS_MAX_AGE}
+        
+        # Permite enviar credenciales (cookies, cabeceras de autorización) en solicitudes cross-origin
+        # true: Permite cookies y autenticación cross-origin (requiere origen específico)
+        # false: No permite cookies cross-origin (más seguro para API públicas)
+        accessControlAllowCredentials: ${CORS_ALLOW_CREDENTIALS}
+        
+        # Añade cabecera Vary:Origin para caché correcta en CDNs e intermediarios
+        accessControlExposeHeaders:
+          - "Content-Length"  # Permite al cliente conocer el tamaño de la respuesta
+          - "Content-Type"    # Permite al cliente conocer el tipo de contenido
+        
+        # Añade cabecera Vary:Origin automáticamente para correcta caché
+        addVaryHeader: true
+
+    # =====================================================
+    # MIDDLEWARE: REESCRITURA DE PATHS
+    # =====================================================
+    # Propósito: Elimina prefijos de URL antes de enrutar al servicio
+    # Uso típico: APIs con prefijos de versión o APIs detrás de un gateway
+    # Impacto en rendimiento: Mínimo - simple manipulación de string
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/stripprefix/
+    # -----------------------------------------------------
+    ${PATH_REWRITE_MIDDLEWARE_NAME}:
+      stripPrefix:
+        # Prefijos a eliminar de la ruta antes de enviar al servicio
+        # Ej: /api/v1/users -> /users si prefijo es /api/v1
+        prefixes:
+          - "${STRIP_PREFIX_PATH}"
+        
+        # Fuerza slash al principio de la ruta después de quitar el prefijo
+        # true: garantiza que la ruta siempre empieza con /
+        forceSlash: true
+
+    # =====================================================
+    # MIDDLEWARE: AUTENTICACIÓN FORWARD
+    # =====================================================
+    # Propósito: Delega autenticación a un servicio externo
+    # Uso típico: SSO, OAuth, sistemas de autenticación centralizados
+    # Impacto en rendimiento: Moderado - añade una solicitud HTTP adicional
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/forwardauth/
+    # -----------------------------------------------------
+    ${TIMEOUT_MIDDLEWARE_NAME}:
+      forwardAuth:
+        # Servicio de autenticación que validará las solicitudes
+        # El servicio debe responder 2xx para permitir o 4xx para denegar
+        address: "http://${AUTH_SERVICE_HOST}:${AUTH_SERVICE_PORT}/auth"
+        
+        # Confía en cabeceras X-Forwarded-* del servicio de autenticación
+        # Permite que el servicio de auth modifique la solicitud original
+        trustForwardHeader: true
+        
+        # Cabeceras que se copiarán del servicio de autenticación a la solicitud
+        # Útil para pasar información de usuario o tokens después de autenticar
+        authResponseHeaders:
+          - "X-Auth-User"   # Usuario autenticado
+          - "X-Auth-Token"  # Token de sesión o JWT
+
+    # =====================================================
+    # MIDDLEWARE: REINTENTOS
+    # =====================================================
+    # Propósito: Reintenta solicitudes fallidas al backend
+    # Uso típico: Mejorar resiliencia ante fallos temporales
+    # Impacto en rendimiento: 
+    #   - Puede aumentar latencia durante fallos
+    #   - Puede aumentar carga en servicios sobrecargados
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/retry/
+    # -----------------------------------------------------
+    retry:
+      # Número máximo de intentos incluido el primero
+      # Valores altos aumentan la probabilidad de éxito pero pueden sobrecargar servicios
+      attempts: 3
+      
+      # Tiempo de espera inicial entre reintentos (aumenta exponencialmente)
+      # Valores más altos reducen la presión inmediata en servicios con problemas
+      initialInterval: "500ms"
+          
+    # =====================================================
+    # MIDDLEWARE: CIRCUIT BREAKER
+    # =====================================================
+    # Propósito: Previene solicitudes a servicios degradados
+    # Uso típico: Mejorar resiliencia del sistema completo
+    # Impacto en rendimiento: 
+    #   - Mejora rendimiento general durante fallos parciales
+    #   - Protege servicios degradados de sobrecarga
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/circuitbreaker/
+    # -----------------------------------------------------
+    circuitBreaker:
+      # Expresión que determina cuándo activar el circuit breaker
+      # NetworkErrorRatio(): proporción de errores de red (0-1)
+      # LatencyAtQuantileMS(50): latencia en ms en el percentil 50
+      # ResponseCodeRatio(500, 600, 0, 600): proporción de errores HTTP 5xx
+      expression: "NetworkErrorRatio() > 0.10"
+          
+    # =====================================================
+    # MIDDLEWARE: LISTA BLANCA DE IPs
+    # =====================================================
+    # Propósito: Restringe acceso basado en dirección IP
+    # Uso típico: Paneles de administración, APIs internas
+    # Impacto en rendimiento: Bajo - simple comparación de strings
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/ipwhitelist/
+    # -----------------------------------------------------
+    ipWhiteList:
+      # Rangos de IPs permitidos (notación CIDR)
+      # 127.0.0.1/32: solo localhost
+      # 10.0.0.0/8: red privada clase A
+      sourceRange:
+        - "127.0.0.1/32"  # Siempre permitir localhost
+        - "${TRAEFIK_TRUSTED_IPS}"  # IPs adicionales de .env
+
+    # =====================================================
+    # MIDDLEWARE: BUFFER
+    # =====================================================
+    # Propósito: Almacena temporalmente la solicitud para procesamiento
+    # Uso típico: Solicitudes grandes o servicios con restricciones de tamaño
+    # Impacto en rendimiento: 
+    #   - Moderado - aumenta uso de memoria
+    #   - Mejora estabilidad con solicitudes grandes
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/buffering/
+    # -----------------------------------------------------
+    buffer:
+      # Tamaño máximo del cuerpo de solicitud (en bytes)
+      # 10MB = límite razonable para subidas de archivos
+      maxRequestBodyBytes: 10485760  # 10MB
+      
+      # Tamaño máximo a mantener en memoria antes de pasar a disco
+      # Valores más altos mejoran rendimiento pero aumentan uso de memoria
+      memRequestBodyBytes: 2097152   # 2MB
+
+    # =====================================================
+    # MIDDLEWARE: REDIRECCIÓN POR REGEX
+    # =====================================================
+    # Propósito: Redirecciona URLs basado en patrones regex
+    # Uso típico: Migración de URLs, eliminar www, normalización de rutas
+    # Impacto en rendimiento: Bajo - evaluación de expresión regular
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/redirectregex/
+    # -----------------------------------------------------
+    redirectRegex:
+      # Expresión regular para capturar la URL a redirigir
+      # ^https://www\\.(.+): Captura URLs que empiezan con www.
+      regex: "^https://www\\.(.+)"
+      
+      # Patrón de sustitución para la nueva URL
+      # $1 se reemplaza con el contenido capturado en el regex
+      replacement: "https://$1"
+      
+      # Si la redirección es permanente (301) o temporal (302)
+      # Permanente = mejor para SEO, mejor caché en navegadores
+      permanent: true
+
+    # =====================================================
+    # MIDDLEWARE: CADENAS (COMBINACIONES)
+    # =====================================================
+    # Propósito: Agrupar múltiples middlewares en secuencia
+    # Uso típico: Crear conjuntos reutilizables de middlewares 
+    # Impacto en rendimiento: Suma de los impactos individuales
+    # Documentación: https://doc.traefik.io/traefik/middlewares/http/chain/
+    # -----------------------------------------------------
+    securedChain:
+      chain:
+        # Lista de middlewares a aplicar en orden secuencial
+        # El orden es importante: se ejecutan de arriba a abajo
+        middlewares:
+          # Headers de seguridad primero - establece políticas base
+          - "${SECURITY_HEADERS_MIDDLEWARE_NAME}"
+          # Compresión después - reduce tamaño de respuesta
+          - "${COMPRESS_MIDDLEWARE_NAME}"
+          # CORS al final - añade cabeceras de acceso cross-origin
+          - "${CORS_MIDDLEWARE_NAME}"
+        # Notas de uso:
+        # - Esta cadena es ideal para aplicaciones web públicas
+        # - Proporciona seguridad, rendimiento y compatibilidad cross-origin
+
+    adminChain:
+      chain:
+        # Cadena optimizada para interfaces administrativas
+        middlewares:
+          # Autenticación primero - bloquea acceso no autorizado antes de procesar
+          - "${AUTH_MIDDLEWARE_NAME}"
+          # Headers de seguridad después - refuerza políticas para usuarios autenticados
+          - "${SECURITY_HEADERS_MIDDLEWARE_NAME}"
+          # Rate limit al final - protege contra abuso incluso de usuarios válidos
+          - "${RATE_LIMIT_MIDDLEWARE_NAME}"
+        # Notas de uso:
+        # - Esta cadena es ideal para dashboards administrativos
+        # - Garantiza autenticación y protección contra abusos

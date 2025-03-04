@@ -1,0 +1,74 @@
+# Imagen base de PHP-FPM con la versión especificada
+FROM php:${PHP_VERSION}-fpm
+
+# Argumentos personalizables durante la construcción
+ARG NODE_VERSION=${NODE_VERSION}  # Versión de Node.js a instalar
+ARG USER_ID=1000                  # ID de usuario para el usuario no-root
+ARG GROUP_ID=1000                 # ID de grupo para el usuario no-root
+
+
+#  Instalar dependencias del sistema y extensiones PHP necesarias para Laravel
+# - git: para Composer
+# - curl: para descargas e instalaciones
+# - libpng-dev, libjpeg62-turbo-dev: para procesamiento de imágenes (extensión GD)
+# - ...continuar con el resto...
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libmcrypt-dev \
+    libicu-dev \
+    libpq-dev \
+    libxslt1-dev \
+    librabbitmq-dev \
+    libssl-dev \
+    libgmp-dev \
+    libsodium-dev \
+    supervisor \
+    cron \
+    && docker-php-ext-install pdo pdo_mysql mbstring exif pcntl bcmath gd zip intl opcache soap xsl \
+    && pecl install mongodb redis \
+    && docker-php-ext-enable mongodb redis
+
+# Instalar Node.js
+RUN curl -sL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g npm
+
+# Instalar Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Configurar PHP
+COPY ./php.ini /usr/local/etc/php/conf.d/custom.ini
+
+# Crear usuario no root
+RUN groupadd --gid $GROUP_ID appuser \
+    && useradd --uid $USER_ID --gid appuser --shell /bin/bash --create-home appuser
+
+# Configurar permisos
+RUN mkdir -p /var/www/html \
+    && chown -R appuser:appuser /var/www/html
+
+# Configurar cron para Laravel scheduler
+RUN echo "* * * * * appuser cd /var/www/html && php artisan schedule:run >> /dev/null 2>&1" > /etc/cron.d/laravel-scheduler \
+    && chmod 0644 /etc/cron.d/laravel-scheduler
+
+# Configurar supervisor para laravel queue worker
+RUN mkdir -p /etc/supervisor/conf.d/
+COPY ./supervisor.conf /etc/supervisor/conf.d/laravel.conf
+
+WORKDIR /var/www/html
+
+# Cambiar a usuario no-root para operaciones
+USER appuser
+
+EXPOSE 9000
+
+CMD ["php-fpm"]
