@@ -1,0 +1,226 @@
+# =================================================================
+# CONFIGURACIÓN DE DOCKER COMPOSE PARA PROYECTOS SYMFONY
+# =================================================================
+# Este archivo define los servicios, redes y volúmenes necesarios
+# para ejecutar una aplicación Symfony en contenedores Docker.
+# =================================================================
+
+# Versión del formato de Docker Compose
+version: '3.8'
+
+# ----- DEFINICIÓN DE SERVICIOS -----
+services:
+  # ----- SERVICIO PRINCIPAL DE LA APLICACIÓN (PHP-FPM) -----
+  app:
+    # Construye la imagen desde el Dockerfile local
+    build:
+      context: .
+      # Pasa argumentos al Dockerfile durante la construcción
+      args:
+        # Versión de PHP definida en .env.docker
+        PHP_VERSION: ${PHP_VERSION}
+        # Versión de Node.js definida en .env.docker
+        NODE_VERSION: ${NODE_VERSION}
+    
+    # Nombre personalizado para el contenedor
+    container_name: ${APP_NAME}
+    
+    # Política de reinicio (se reinicia automáticamente si falla)
+    restart: unless-stopped
+    
+    # Volúmenes montados entre el host y el contenedor
+    volumes:
+      # El código fuente del proyecto montado en el directorio de trabajo
+      - ./:/var/www/html
+      # Archivo de configuración personalizado de PHP
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    
+    # Redes a las que se conecta el contenedor
+    networks:
+      # Red externa compartida con otros servicios como MySQL
+      - ${NETWORK_NAME}
+    
+    # Dependencias (se inicia después de Redis)
+    depends_on:
+      - redis
+    
+    # Verificación de salud del contenedor
+    healthcheck:
+      # Comando que verifica si Symfony está funcionando correctamente
+      test: ["CMD", "php", "bin/console", "--version"]
+      # Intervalo entre verificaciones
+      interval: 30s
+      # Tiempo límite para cada verificación
+      timeout: 10s
+      # Número de reintentos antes de considerar no saludable
+      retries: 3
+      # Periodo inicial antes de comenzar las verificaciones
+      start_period: 30s
+
+  # ----- SERVIDOR WEB NGINX -----
+  webserver:
+    # Imagen oficial de Nginx (versión ligera)
+    image: nginx:latest
+    
+    # Nombre personalizado para el contenedor
+    container_name: ${APP_NAME}-nginx
+    
+    # Política de reinicio
+    restart: unless-stopped
+    
+    # Volúmenes montados
+    volumes:
+      # Código fuente para servir archivos estáticos
+      - ./:/var/www/html
+      # Configuración personalizada de Nginx
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    
+    # Redes a las que se conecta
+    networks:
+      - ${NETWORK_NAME}
+    
+    # Dependencias (se inicia después del servicio app)
+    depends_on:
+      - app
+    
+    # Etiquetas para integración con Traefik (proxy inverso)
+    labels:
+      # Habilita Traefik para este contenedor
+      - "traefik.enable=true"
+      # Define la regla para enrutar el tráfico (basada en el nombre de dominio)
+      - "traefik.http.routers.${APP_NAME}.rule=Host(`${APP_DOMAIN}`)"
+      # Usa el punto de entrada HTTPS
+      - "traefik.http.routers.${APP_NAME}.entrypoints=websecure"
+      # Habilita TLS (HTTPS)
+      - "traefik.http.routers.${APP_NAME}.tls=true"
+      # Puerto donde Nginx escucha dentro del contenedor
+      - "traefik.http.services.${APP_NAME}.loadbalancer.server.port=80"
+      # Middleware para redirigir HTTP a HTTPS
+      - "traefik.http.middlewares.${APP_NAME}-https-redirect.redirectscheme.scheme=https"
+      # Middleware para habilitar compresión de respuestas
+      - "traefik.http.middlewares.${APP_NAME}-compress.compress=true"
+      # Aplica el middleware de compresión a este router
+      - "traefik.http.routers.${APP_NAME}.middlewares=${APP_NAME}-compress"
+    
+    # Verificación de salud para Nginx
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ----- SERVICIO REDIS (CACHÉ, SESIONES) -----
+  redis:
+    # Imagen oficial de Redis (versión ligera)
+    image: redis:alpine
+    
+    # Nombre personalizado para el contenedor
+    container_name: ${APP_NAME}-redis
+    
+    # Política de reinicio
+    restart: unless-stopped
+    
+    # Redes a las que se conecta
+    networks:
+      - ${NETWORK_NAME}
+    
+    # Volumen para persistencia de datos
+    volumes:
+      - redis_data:/data
+    
+    # Verificación de salud para Redis
+    healthcheck:
+      # Comando simple para verificar que Redis responde
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    
+    # Etiquetas para identificación
+    labels:
+      - "com.wilodev.project=${APP_NAME}"
+      - "com.wilodev.service=redis"
+
+  # ----- SERVICIO WEBPACK ENCORE (COMPILACIÓN DE ASSETS) -----
+  encore:
+    # Imagen oficial de Node.js (versión especificada en variables)
+    image: node:${NODE_VERSION}-alpine
+    
+    # Nombre personalizado para el contenedor
+    container_name: ${APP_NAME}-encore
+    
+    # Volúmenes montados
+    volumes:
+      # Monta el código fuente para acceder a los assets
+      - ./:/app
+    
+    # Directorio de trabajo dentro del contenedor
+    working_dir: /app
+    
+    # Comando que se ejecuta al iniciar el contenedor
+    # Verifica si existe package.json, instala dependencias y ejecuta Encore en modo watch
+    command: sh -c "if [ -f package.json ]; then yarn install && yarn dev --watch; else echo 'No package.json found'; fi"
+    
+    # Redes a las que se conecta
+    networks:
+      - ${NETWORK_NAME}
+    
+    # Dependencias (se inicia después del servicio app)
+    depends_on:
+      - app
+    
+    # Etiquetas para identificación
+    labels:
+      - "com.wilodev.project=${APP_NAME}"
+      - "com.wilodev.service=encore"
+
+  # ----- SERVICIO MESSENGER (OPCIONAL, PARA COLAS SYMFONY) -----
+  messenger:
+    # Construye usando el mismo Dockerfile que el servicio principal
+    build:
+      context: .
+      args:
+        PHP_VERSION: ${PHP_VERSION}
+        NODE_VERSION: ${NODE_VERSION}
+    
+    # Nombre personalizado para el contenedor
+    container_name: ${APP_NAME}-messenger
+    
+    # Política de reinicio
+    restart: unless-stopped
+    
+    # Volúmenes montados (los mismos que el servicio principal)
+    volumes:
+      - ./:/var/www/html
+      - ./php.ini:/usr/local/etc/php/conf.d/custom.ini
+    
+    # Comando para ejecutar el worker de Messenger
+    command: ["php", "bin/console", "messenger:consume", "async", "--time-limit=3600"]
+    
+    # Dependencias
+    depends_on:
+      - app
+      - redis
+    
+    # Redes a las que se conecta
+    networks:
+      - ${NETWORK_NAME}
+    
+    # Etiquetas para identificación
+    labels:
+      - "com.wilodev.project=${APP_NAME}"
+      - "com.wilodev.service=messenger"
+
+# ----- DEFINICIÓN DE REDES -----
+networks:
+  # Red externa creada previamente por WiloDev Dock
+  ${NETWORK_NAME}:
+    # Indica que esta red ya existe y no debe crearse
+    external: true
+
+# ----- DEFINICIÓN DE VOLÚMENES -----
+volumes:
+  # Volumen para datos de Redis
+  redis_data:
+    # Nombre personalizado para el volumen
+    name: ${APP_NAME}-redis-data

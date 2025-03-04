@@ -1,0 +1,559 @@
+version: '3.8'  
+# Define la versión de la sintaxis de Docker Compose que se utilizará. La versión 3.8 incluye características más recientes.
+
+services:
+# Sección donde se definen todos los servicios (contenedores) que se van a ejecutar.
+
+  traefik:
+  # Define el servicio llamado "traefik", un servidor proxy inverso.
+  
+    container_name: ${TRAEFIK_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando una variable de entorno TRAEFIK_CONTAINER_NAME.
+    
+    image: traefik:${TRAEFIK_VERSION}
+    # Especifica la imagen Docker a utilizar, en este caso Traefik versión 3.3.4.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    security_opt:
+      - no-new-privileges:true
+    # Opción de seguridad que impide que el proceso dentro del contenedor adquiera nuevos privilegios.
+    
+    ports:
+      - "${TRAEFIK_HTTP_PORT}:80"
+      - "${TRAEFIK_HTTPS_PORT}:443"
+    # Mapea los puertos del host a los puertos del contenedor. El puerto HTTP y HTTPS se definen mediante variables.
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Monta el socket de Docker en modo solo lectura (ro), permitiendo a Traefik detectar otros contenedores.
+      
+      - ./traefik/config:/etc/traefik
+      # Monta el directorio local de configuración de Traefik dentro del contenedor.
+      
+      - ./traefik/config/certs:/etc/certs:ro
+      # Monta los certificados SSL en modo solo lectura dentro del contenedor.
+      
+      - ./traefik/logs:/var/log/traefik
+      # Monta el directorio local de logs de Traefik dentro del contenedor.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+    
+    labels:
+      - "traefik.enable=true"
+      # Habilita Traefik para este contenedor.
+      
+      - "traefik.http.routers.${TRAEFIK_DASHBOARD_ROUTER_NAME}.rule=Host(`${TRAEFIK_DOMAIN}`)"
+      # Define la regla del router: este servicio responderá a las peticiones del dominio especificado.
+      
+      - "traefik.http.routers.${TRAEFIK_DASHBOARD_ROUTER_NAME}.service=api@internal"
+      # Especifica que este router debe dirigirse al servicio de API interna de Traefik.
+      
+      - "traefik.http.routers.${TRAEFIK_DASHBOARD_ROUTER_NAME}.middlewares=traefik-auth,secureHeaders"
+      # Aplica los middleware de autenticación y cabeceras seguras a este router.
+      
+      - "traefik.http.middlewares.${AUTH_MIDDLEWARE_NAME}.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
+      # Configura la autenticación básica con los usuarios definidos en la variable TRAEFIK_DASHBOARD_AUTH.
+      
+      - "traefik.http.routers.${TRAEFIK_DASHBOARD_ROUTER_NAME}.entrypoints=websecure"
+      # Define que este router solo escuche en el punto de entrada "websecure" (HTTPS).
+      
+      - "traefik.http.routers.${TRAEFIK_DASHBOARD_ROUTER_NAME}.tls=true"
+      # Activa TLS (HTTPS) para este router.
+      
+      - "traefik.http.services.${TRAEFIK_DASHBOARD_ROUTER_NAME}.loadbalancer.server.scheme=https"
+      # Establece que el esquema del balanceador de carga sea HTTPS.
+    
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      # Comando para verificar que Traefik esté funcionando correctamente mediante su función interna de healthcheck.
+        
+      interval: 10s
+      # Intervalo de tiempo entre chequeos de salud, ejecutándose cada 10 segundos.
+        
+      timeout: 5s
+      # Tiempo máximo de espera para el chequeo, considerando fallido si tarda más de 5 segundos.
+        
+      retries: 3
+      # Número de reintentos antes de marcar el contenedor como no saludable.
+        
+      start_period: 5s
+      # Periodo inicial de gracia para que el servicio se inicialice antes de comenzar los chequeos.
+      
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+        
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+          
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  mysql:
+  # Define el servicio para la base de datos MySQL.
+  
+    container_name: ${MYSQL_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando una variable de entorno.
+    
+    image: mysql:${MYSQL_VERSION}
+    # Especifica la imagen de MySQL con la versión definida en la variable MYSQL_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Establece la contraseña del usuario root de MySQL.
+      
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      # Define el nombre de la base de datos a crear inicialmente.
+      
+      MYSQL_USER: ${MYSQL_USER}
+      # Establece el nombre del usuario adicional de MySQL.
+      
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # Establece la contraseña del usuario adicional.
+    
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # Monta un volumen para persistir los datos de MySQL.
+      
+      - ./mysql/config/my.cnf:/etc/mysql/conf.d/my.cnf
+      # Monta el archivo de configuración personalizado de MySQL.
+
+      - ./mysql/logs:/var/log/mysql
+      # Monta el directorio local de logs de MySQL dentro del contenedor.
+    
+    ports:
+      - "${MYSQL_PORT}:3306"
+    # Mapea el puerto del host al puerto 3306 de MySQL.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada.
+    
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      # Comando para verificar que MySQL esté funcionando correctamente.
+      
+      interval: 10s
+      # Intervalo de tiempo entre chequeos de salud.
+      
+      timeout: 5s
+      # Tiempo máximo de espera para el chequeo.
+      
+      retries: 5
+      # Número de reintentos antes de marcar el contenedor como no saludable.
+
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+        
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+            
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  mongodb:
+  # Define el servicio para la base de datos MongoDB.
+  
+    container_name: ${MONGO_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando una variable de entorno.
+    
+    image: mongo:${MONGO_VERSION}
+    # Especifica la imagen de MongoDB con la versión definida en la variable MONGO_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      # Establece el nombre del usuario root de MongoDB.
+      
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      # Establece la contraseña del usuario root de MongoDB.
+      
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+      # Define el nombre de la base de datos a crear inicialmente.
+    
+    volumes:
+      - mongo_data:/data/db
+      # Monta un volumen para persistir los datos de MongoDB.
+      
+      - ./mongo/config/mongod.conf:/etc/mongod.conf
+      # Monta el archivo de configuración personalizado de MongoDB.
+
+      - ./mongo/logs:/var/log/mongodb
+      # Monta el directorio local de logs de MongoDB dentro del contenedor.
+    
+    ports:
+      - "${MONGO_PORT}:27017"
+    # Mapea el puerto del host al puerto 27017 de MongoDB.
+    
+    command: ["--config", "/etc/mongod.conf"]
+    # Especifica el comando de inicio para usar el archivo de configuración personalizado.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada.
+    
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "-u", "${MONGO_INITDB_ROOT_USERNAME}", "-p", "${MONGO_INITDB_ROOT_PASSWORD}", "--authenticationDatabase", "admin"]
+      # Comando para verificar que MongoDB esté funcionando correctamente ejecutando un ping a la base de datos.
+        
+      interval: 10s
+      # Intervalo de tiempo entre chequeos de salud, ejecutándose cada 10 segundos.
+        
+      timeout: 5s
+      # Tiempo máximo de espera para el chequeo, considerando fallido si tarda más de 5 segundos.
+        
+      retries: 5
+      # Número de reintentos antes de marcar el contenedor como no saludable.
+
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+        
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+          
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  mailhog:
+  # Define el servicio para el servidor de correo de pruebas MailHog.
+    
+    container_name: ${MAILHOG_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando la variable de entorno MAILHOG_CONTAINER_NAME.
+      
+    image: mailhog/mailhog:latest
+    # Especifica la imagen de MailHog, usando la última versión disponible.
+      
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+      
+    ports:
+      - "${MAILHOG_SMTP_PORT}:1025"  # Puerto SMTP
+      # Mapea el puerto SMTP del host (definido por MAILHOG_SMTP_PORT) al puerto 1025 de MailHog.
+      # Las aplicaciones se conectarán a este puerto para enviar correos.
+        
+      - "${MAILHOG_HTTP_PORT}:8025"  # Puerto de la interfaz web
+      # Mapea el puerto HTTP del host (definido por MAILHOG_HTTP_PORT) al puerto 8025 de MailHog.
+      # Este puerto sirve la interfaz web para visualizar los correos capturados.
+      
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+      
+    labels:
+      - "traefik.enable=true"
+      # Habilita Traefik para este contenedor, permitiendo el enrutamiento HTTP.
+        
+      - "traefik.http.routers.mailhog.rule=Host(`${MAILHOG_DOMAIN}`)"
+      # Define la regla del router: este servicio responderá a peticiones del dominio especificado en MAILHOG_DOMAIN.
+        
+      - "traefik.http.routers.mailhog.entrypoints=websecure"
+      # Define que este router solo escuche en el punto de entrada "websecure" (HTTPS).
+        
+      - "traefik.http.routers.mailhog.tls=true"
+      # Activa TLS (HTTPS) para este router, garantizando conexiones seguras a la interfaz web.
+        
+      - "traefik.http.services.mailhog.loadbalancer.server.port=8025"
+      # Especifica que el tráfico debe dirigirse al puerto 8025 del contenedor, donde se ejecuta la interfaz web.
+
+      - "traefik.http.routers.mailhog.middlewares=${SECURITY_HEADERS_MIDDLEWARE_NAME}"
+      # Aplica el middleware de cabeceras de seguridad a este router.
+    
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--spider", "http://localhost:8025"]
+      # Comando para verificar que MailHog esté funcionando correctamente comprobando la disponibilidad de la interfaz web.
+      
+      interval: 10s
+      # Intervalo de tiempo entre chequeos de salud, ejecutándose cada 10 segundos.
+      
+      timeout: 5s
+        # Tiempo máximo de espera para el chequeo, considerando fallido si tarda más de 5 segundos.
+          
+      retries: 3
+      # Número de reintentos antes de marcar el contenedor como no saludable.
+      
+    logging:
+        driver: "json-file"
+        # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+          
+        options:
+          max-size: "10m"
+          # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+            
+          max-file: "3"
+          # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  # Servicios de observabilidad
+  prometheus:
+  # Define el servicio de Prometheus, un sistema de monitoreo y alerta que recopila métricas de los servicios.
+  
+    container_name: ${PROMETHEUS_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando la variable de entorno PROMETHEUS_CONTAINER_NAME.
+    
+    image: prom/prometheus:${PROMETHEUS_VERSION}
+    # Especifica la imagen de Prometheus con la versión definida en la variable PROMETHEUS_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      # Monta el archivo de configuración local de Prometheus dentro del contenedor.
+      
+      - prometheus_data:/prometheus
+      # Monta un volumen para persistir los datos y métricas recopiladas por Prometheus.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      # Especifica el archivo de configuración a utilizar para Prometheus.
+      
+      - '--storage.tsdb.path=/prometheus'
+      # Define la ruta donde Prometheus almacenará su base de datos de series temporales.
+      
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      # Establece la ruta de las bibliotecas de la consola web de Prometheus.
+      
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      # Establece la ruta de las plantillas de la consola web de Prometheus.
+    
+    labels:
+      - "traefik.enable=true"
+      # Habilita Traefik para este contenedor, permitiendo el enrutamiento HTTP.
+      
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.${DOMAIN_BASE}`)"
+      # Define la regla del router: este servicio responderá a peticiones del dominio prometheus.DOMAIN_BASE.
+      
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      # Define que este router solo escuche en el punto de entrada "websecure" (HTTPS).
+      
+      - "traefik.http.routers.prometheus.tls=true"
+      # Activa TLS (HTTPS) para este router, garantizando conexiones seguras a la interfaz web.
+      
+      - "traefik.http.routers.prometheus.middlewares=${AUTH_MIDDLEWARE_NAME},${SECURITY_HEADERS_MIDDLEWARE_NAME}"
+      # Aplica los middlewares de autenticación y cabeceras de seguridad para proteger la interfaz de Prometheus.
+      
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+      # Especifica que el tráfico debe dirigirse al puerto 9090 del contenedor, donde se ejecuta la interfaz web.
+    
+    depends_on:
+      - traefik
+      # Indica que este servicio depende de Traefik y debe iniciarse después de él.
+    
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+      
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+        
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+
+  grafana:
+  # Define el servicio de Grafana, una plataforma de análisis y visualización de métricas y logs.
+  
+    container_name: ${GRAFANA_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando la variable de entorno GRAFANA_CONTAINER_NAME.
+    
+    image: grafana/grafana:${GRAFANA_VERSION}
+    # Especifica la imagen de Grafana con la versión definida en la variable GRAFANA_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    volumes:
+      - grafana_data:/var/lib/grafana
+      # Monta un volumen para persistir los datos, configuraciones y dashboards de Grafana.
+      
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      # Monta los directorios de aprovisionamiento para configurar automáticamente datasources y dashboards.
+    
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      # Establece el nombre de usuario administrador de Grafana desde una variable de entorno.
+      
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      # Establece la contraseña del administrador de Grafana desde una variable de entorno.
+      
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Desactiva el registro de nuevos usuarios en la interfaz de Grafana.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+    
+    labels:
+      - "traefik.enable=true"
+      # Habilita Traefik para este contenedor, permitiendo el enrutamiento HTTP.
+      
+      - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN_BASE}`)"
+      # Define la regla del router: este servicio responderá a peticiones del dominio grafana.DOMAIN_BASE.
+      
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      # Define que este router solo escuche en el punto de entrada "websecure" (HTTPS).
+      
+      - "traefik.http.routers.grafana.tls=true"
+      # Activa TLS (HTTPS) para este router, garantizando conexiones seguras a la interfaz web.
+      
+      - "traefik.http.routers.grafana.middlewares=${SECURITY_HEADERS_MIDDLEWARE_NAME}"
+      # Aplica el middleware de cabeceras de seguridad para proteger la interfaz de Grafana.
+      
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+      # Especifica que el tráfico debe dirigirse al puerto 3000 del contenedor, donde se ejecuta la interfaz web.
+    
+    depends_on:
+      - prometheus
+      # Indica que este servicio depende de Prometheus y debe iniciarse después de él.
+    
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+      
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+        
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  loki:
+  # Define el servicio Loki, un sistema de agregación de logs diseñado por Grafana Labs.
+  
+    container_name: ${LOKI_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando la variable de entorno LOKI_CONTAINER_NAME.
+    
+    image: grafana/loki:${LOKI_VERSION}
+    # Especifica la imagen de Loki con la versión definida en la variable LOKI_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    volumes:
+      - loki_data:/loki
+      # Monta un volumen para persistir los datos y logs almacenados por Loki.
+      
+      - ./loki/config.yml:/etc/loki/config.yml
+      # Monta el archivo de configuración local de Loki dentro del contenedor.
+    
+    command: -config.file=/etc/loki/config.yml
+    # Especifica el archivo de configuración a utilizar para Loki.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+    
+    depends_on:
+      - grafana
+      # Indica que este servicio depende de Grafana y debe iniciarse después de él.
+    
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+      
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+        
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+  promtail:
+  # Define el servicio Promtail, un agente que recopila logs y los envía a Loki para su indexación.
+  
+    container_name: ${PROMTAIL_CONTAINER_NAME}
+    # Establece el nombre del contenedor usando la variable de entorno PROMTAIL_CONTAINER_NAME.
+    
+    image: grafana/promtail:${PROMTAIL_VERSION}
+    # Especifica la imagen de Promtail con la versión definida en la variable PROMTAIL_VERSION.
+    
+    restart: unless-stopped
+    # Configura que el contenedor se reinicie automáticamente a menos que se detenga manualmente.
+    
+    volumes:
+      - /var/log:/var/log
+      # Monta el directorio de logs del sistema host para que Promtail pueda recopilarlos.
+      
+      - ./promtail/config.yml:/etc/promtail/config.yml
+      # Monta el archivo de configuración local de Promtail dentro del contenedor.
+      
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Monta los logs de contenedores Docker en modo solo lectura para que Promtail pueda recopilarlos.
+    
+    command: -config.file=/etc/promtail/config.yml
+    # Especifica el archivo de configuración a utilizar para Promtail.
+    
+    networks:
+      - ${NETWORK_NAME}
+    # Conecta este contenedor a la red especificada por la variable NETWORK_NAME.
+    
+    depends_on:
+      - loki
+      # Indica que este servicio depende de Loki y debe iniciarse después de él.
+    
+    logging:
+      driver: "json-file"
+      # Utiliza el driver de logging json-file, que almacena los logs como archivos JSON.
+      
+      options:
+        max-size: "10m"
+        # Tamaño máximo de cada archivo de log antes de rotarlo, establecido en 10 megabytes.
+        
+        max-file: "3"
+        # Número máximo de archivos de log a mantener, eliminando los más antiguos cuando se excede.
+
+networks:
+# Sección donde se definen las redes para conectar los contenedores.
+
+  ${NETWORK_NAME}:
+    name: ${NETWORK_NAME}
+    # Establece el nombre de la red usando la variable NETWORK_NAME.
+    
+    driver: bridge
+    # Define el tipo de driver de red como "bridge", que es el estándar para comunicación entre contenedores.
+
+volumes:
+# Sección donde se definen los volúmenes para persistir datos.
+
+  mysql_data:
+  # Define un volumen para los datos de MySQL.
+    name: ${MYSQL_CONTAINER_NAME}-data
+    # Establece un nombre personalizado para el volumen basado en el nombre del contenedor.
+  
+  mongo_data:
+  # Define un volumen para los datos de MongoDB.  
+    name: ${MONGO_CONTAINER_NAME}-data
+    # Establece un nombre personalizado para el volumen basado en el nombre del contenedor.
+  
+  prometheus_data:
+  # Define un volumen para los datos de Prometheus.
+    name: ${PROMETHEUS_CONTAINER_NAME}-data
+    # Establece un nombre personalizado para el volumen basado en el nombre del contenedor.
+  
+  grafana_data:
+  # Define un volumen para los datos de Grafana.
+    name: ${GRAFANA_CONTAINER_NAME}-data
+    # Establece un nombre personalizado para el volumen basado en el nombre del contenedor.
+  
+  loki_data:
+  # Define un volumen para los datos de Loki.
+    name: ${LOKI_CONTAINER_NAME}-data
+    # Establece un nombre personalizado para el volumen basado en el nombre del contenedor.

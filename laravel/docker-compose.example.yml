@@ -1,0 +1,168 @@
+# =================================================================
+# CONFIGURACIÓN DE DOCKER COMPOSE PARA PROYECTOS LARAVEL
+# =================================================================
+# Este archivo define los servicios, redes y volúmenes necesarios
+# para ejecutar una aplicación Laravel en contenedores Docker.
+# =================================================================
+
+# Versión del formato de Docker Compose (recomendado 3.8+)
+version: '3.8'
+
+# ----- DEFINICIÓN DE SERVICIOS -----
+services:
+  # ----- SERVICIO PRINCIPAL DE LA APLICACIÓN (PHP) -----
+  app:
+    # Nombre del contenedor, generado dinámicamente según el nombre del proyecto
+    container_name: ${APP_NAME}-app
+    # Construye la imagen Docker usando el Dockerfile en el directorio actual
+    build:
+      context: .
+      # Argumentos pasados al Dockerfile durante la construcción
+      args:
+        # Versión de PHP definida en .env.docker
+        PHP_VERSION: ${PHP_VERSION}
+        # Versión de Node.js definida en .env.docker
+        NODE_VERSION: ${NODE_VERSION}
+    # Políticas de reinicio (reinicia automáticamente si se detiene)
+    restart: unless-stopped
+    # Variables de entorno disponibles dentro del contenedor
+    environment:
+      # Configura un archivo .env específico para entorno Docker
+      LARAVEL_SAIL: 1
+    # Volúmenes montados entre el host y el contenedor
+    volumes:
+      # Monta el código fuente del proyecto en el contenedor
+      - ./:/var/www/html
+      # Monta la configuración personalizada de PHP
+      - ./docker/php.ini:/usr/local/etc/php/conf.d/custom.ini
+      # Monta la configuración de Supervisor para tareas en segundo plano
+      - ./docker/supervisor:/etc/supervisor/conf.d
+    # Configuración de red para el contenedor
+    networks:
+      # Red externa compartida con los servicios de WiloDev Dock
+      - ${NETWORK_NAME}
+    # Define una verificación de salud para el contenedor
+    healthcheck:
+      # Comando para verificar si el servicio está funcionando
+      test: ["CMD", "php", "artisan", "--version"]
+      # Intervalo entre verificaciones
+      interval: 30s
+      # Tiempo de espera para cada verificación
+      timeout: 10s
+      # Número de reintentos antes de considerar el servicio como no saludable
+      retries: 3
+      # Tiempo de gracia inicial antes de empezar a verificar
+      start_period: 30s
+
+  # ----- SERVIDOR WEB NGINX -----
+  webserver:
+    # Nombre del contenedor del servidor web
+    container_name: ${APP_NAME}-webserver
+    # Usa la imagen oficial de Nginx
+    image: nginx:alpine
+    # Reinicia automáticamente en caso de fallo
+    restart: unless-stopped
+    # Mapeo de puertos (puerto host:puerto contenedor)
+    # El puerto del host no se usa directamente debido a Traefik
+    ports:
+      - "8080:80"
+    # Volúmenes para configuración y archivos
+    volumes:
+      # Monta el código fuente en el directorio web de Nginx
+      - ./:/var/www/html
+      # Monta la configuración personalizada de Nginx
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      # Monta un directorio para logs de Nginx
+      - ./storage/logs/nginx:/var/log/nginx
+    # Dependencias (el servicio app debe iniciarse primero)
+    depends_on:
+      - app
+    # Etiquetas para Traefik
+    labels:
+      # Habilita Traefik para este servicio
+      - "traefik.enable=true"
+      # Define la regla del enrutador (dominio)
+      - "traefik.http.routers.${APP_NAME}.rule=Host(`${APP_DOMAIN}`)"
+      # Solo escucha en el punto de entrada HTTPS
+      - "traefik.http.routers.${APP_NAME}.entrypoints=websecure"
+      # Habilita TLS para HTTPS
+      - "traefik.http.routers.${APP_NAME}.tls=true"
+      # Puerto donde Traefik puede alcanzar este servicio
+      - "traefik.http.services.${APP_NAME}.loadbalancer.server.port=80"
+    # Conexión a la red compartida
+    networks:
+      - ${NETWORK_NAME}
+    # Verificación de salud para Nginx
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ----- REDIS PARA CACHÉ Y COLAS -----
+  redis:
+    # Nombre del contenedor de Redis
+    container_name: ${APP_NAME}-redis
+    # Imagen oficial de Redis
+    image: redis:alpine
+    # Reinicia automáticamente en caso de fallo
+    restart: unless-stopped
+    # Volumen para persistencia de datos
+    volumes:
+      - redis_data:/data
+    # Etiquetas para identificación
+    labels:
+      - "com.wilodev.project=${APP_NAME}"
+    # Conexión a la red compartida
+    networks:
+      - ${NETWORK_NAME}
+    # Verificación de salud para Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ----- WORKER PARA PROCESAR COLAS DE LARAVEL -----
+  queue-worker:
+    # Usa la misma imagen que el contenedor principal
+    build:
+      context: .
+      args:
+        PHP_VERSION: ${PHP_VERSION}
+        NODE_VERSION: ${NODE_VERSION}
+    # Nombre del contenedor de worker
+    container_name: ${APP_NAME}-queue
+    # Reinicia automáticamente en caso de fallo
+    restart: unless-stopped
+    # Volúmenes compartidos con el contenedor principal
+    volumes:
+      - ./:/var/www/html
+      - ./docker/php.ini:/usr/local/etc/php/conf.d/custom.ini
+    # Comando específico para ejecutar el worker de colas
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=90"]
+    # Dependencias (app y redis deben iniciarse primero)
+    depends_on:
+      - app
+      - redis
+    # Conexión a la red compartida
+    networks:
+      - ${NETWORK_NAME}
+    # Etiquetas para identificación
+    labels:
+      - "com.wilodev.component=queue-worker"
+      - "com.wilodev.project=${APP_NAME}"
+
+# ----- DEFINICIÓN DE REDES -----
+networks:
+  # Red externa compartida con WiloDev Dock
+  ${NETWORK_NAME}:
+    # Indica que esta red ya existe (creada por WiloDev Dock)
+    external: true
+
+# ----- DEFINICIÓN DE VOLÚMENES -----
+volumes:
+  # Volumen para los datos de Redis, nombrado dinámicamente
+  redis_data:
+    name: ${APP_NAME}-redis-data

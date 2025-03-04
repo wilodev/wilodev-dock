@@ -1,0 +1,226 @@
+# =================================================================
+# Configuración Principal de Traefik
+# Versión: 1.0.0
+# Última actualización: 2025-03-02
+# Rendimiento: Optimizado para entornos de desarrollo
+# =================================================================
+# DIAGRAMA: https://doc.traefik.io/traefik/assets/img/architecture-overview.png
+# =================================================================
+
+# Configuración detallada en: https://doc.traefik.io/traefik/operations/api/
+api:
+  # Habilita el panel de control web de Traefik
+  # Permite monitorear rutas, servicios y estado de Traefik a través de una interfaz web
+  dashboard: ${TRAEFIK_DASHBOARD_ENABLED:-true}
+  
+  # Activa el modo de depuración, que proporciona información más detallada
+  # Útil durante el desarrollo, pero debe desactivarse en producción
+  debug: ${TRAEFIK_API_INSECURE:-false}
+
+
+entryPoints:
+  # Los "entryPoints" son los puntos de entrada donde Traefik escucha el tráfico
+  
+  web:
+    # Puerto HTTP (80) - Primer punto de contacto para el tráfico web
+    address: ":${TRAEFIK_HTTP_PORT:-80}"
+    http:
+      redirections:
+        entryPoint:
+          # Redirige automáticamente HTTP a HTTPS (mejora seguridad)
+          # Impacto en rendimiento: Mínimo, recomendado habilitar siempre
+          to: websecure
+          scheme: https
+          permanent: ${HTTPS_REDIRECT_PERMANENT:-true}
+  # Puerto HTTPS (443) - Segundo punto de contacto para el tráfico seguro
+  websecure:
+    # Puerto HTTPS (443) - Tráfico seguro con TLS/SSL
+    address: ":${TRAEFIK_HTTPS_PORT:-443}"
+    http:
+      tls:
+        # Usa el resolvedor de certificados configurado
+        certResolver: ${TRAEFIK_SSL_RESOLVER:-default}
+        # Configuración avanzada de TLS para mayor seguridad
+        options: default
+
+  # Punto de entrada para métricas (uso interno)
+  metrics:
+    address: ":8082"
+    # Solo accesible desde localhost por seguridad
+    proxyProtocol:
+      trustedIPs:
+        - "127.0.0.1/32"
+        - "${TRAEFIK_TRUSTED_IPS:-10.0.0.0/8}"
+
+
+providers:
+  # Los "providers" son fuentes de configuración para Traefik
+  
+  docker:
+    # Permite a Traefik detectar automáticamente contenedores Docker
+    # y configurarlos como servicios sin necesidad de reiniciar Traefik
+    
+    # Especifica cómo Traefik se conecta al demonio de Docker
+    endpoint: "unix:///var/run/docker.sock"
+    
+    # No expone automáticamente todos los contenedores
+    # Cada contenedor debe tener etiquetas específicas para ser expuesto
+    exposedByDefault: false
+    
+    # Define la red Docker en la que Traefik buscará contenedores
+    # Usa una variable de entorno para mayor flexibilidad
+    network: ${NETWORK_NAME}
+    
+    # Regla predeterminada para generar nombres de host automáticamente
+    # Si un contenedor no define su propia regla de host, se aplicará esta
+    # Por ejemplo, un contenedor llamado "webapp" se expondrá como "webapp.tudominio.com"
+    defaultRule: "Host(`{{ normalize .Name }}.${DOMAIN_BASE}`)"
+
+    # Habilita el modo swarm para detectar servicios en un swarm de Docker
+    swarmMode: false
+
+    # Habilita la observación continua de cambios en el entorno Docker
+    watch: true
+  
+  file:
+    # Directorio donde se encuentran los archivos de configuración
+    directory: "/etc/traefik"
+    # Habilita la observación continua de cambios en el entorno
+    watch: true
+    # No se exponen automáticamente todos los archivos
+    filename: ""
+    # Archivos específicos de configuración
+    files:
+      - "/etc/traefik/dynamic.yml"
+      - "/etc/traefik/middleware.yml"
+
+
+certificatesResolvers:
+  # Configuración para gestionar certificados SSL/TLS
+  
+  default:
+    # Usa certificados almacenados localmente en lugar de generarlos automáticamente
+    # Útil para desarrollo o cuando ya tienes certificados
+    fileCertificate:
+      # Ruta al archivo de certificado público
+      certificate: ${SSL_CERT_PATH:-/etc/certs/cert.pem}
+      # Ruta al archivo de clave privada
+      key: ${SSL_KEY_PATH:-/etc/certs/key.pem}
+
+
+# Configuración global de HTTP, incluyendo middlewares
+http:
+  middlewares:
+    # Los middlewares son componentes que procesan las solicitudes antes de llegar a los servicios
+    
+    # secureHeaders:
+    #   # Define cabeceras HTTP de seguridad que se aplicarán a las respuestas
+    #   headers:
+    #     # Evita que tu sitio sea mostrado dentro de frames/iframes (protección contra clickjacking)
+    #     frameDeny: true
+        
+    #     # Fuerza la redirección a HTTPS
+    #     sslRedirect: true
+        
+    #     # Activa el filtro XSS (Cross-Site Scripting) del navegador
+    #     browserXssFilter: true
+        
+    #     # Previene que el navegador interprete archivos como otro tipo MIME (MIME sniffing)
+    #     contentTypeNosniff: true
+        
+    #     # Configura HSTS (HTTP Strict Transport Security)
+    #     # Indica a los navegadores que accedan al sitio solo por HTTPS durante el tiempo especificado
+    #     stsSeconds: 31536000  # 1 año en segundos
+        
+    #     # Incluye subdominios en la política HSTS
+    #     stsIncludeSubdomains: true
+    
+    # compress:
+    #   # Habilita la compresión de respuestas HTTP para reducir el tamaño de transferencia
+    #   # Mejora la velocidad de carga para los usuarios
+    #   compress: {}
+  options:
+    
+    # Middleware para autenticación avanzada
+    forwardAuth:
+      # Confía en las cabeceras de autenticación avanzada
+      trustForwardHeader: true
+    # Middleware para cabeceras de proxy
+    forwardedHeaders:
+      # Permite leer cabeceras de proxy
+      insecure: false
+    
+      trustedIPs:
+        # IPs confiables para leer cabeceras de proxy
+        - "127.0.0.1/32"
+        - "${TRAEFIK_TRUSTED_IPS:-10.0.0.0/8}"
+
+# Configuración para tracing y monitoring
+tracing:
+  
+  # Configuración para el servicio de Traefik
+  serviceName: ${TRAEFIK_SERVICE_NAME:-traefik}
+  
+  # Configuración para el servicio de Jaeger
+  jaeger:
+    
+    # URL del servidor de muestreo para el servicio de Jaeger
+    samplingServerURL: http://localhost:5778/sampling
+    
+    # Puerto y host del agente local para el servicio de Jaeger
+    localAgentHostPort: localhost:6831
+
+# Configuración de logs
+log:
+  # Configura el nivel de detalle de los logs internos de Traefik
+  # Opciones: DEBUG, INFO, WARN, ERROR
+  level: ${TRAEFIK_LOG_LEVEL:-INFO}
+
+  # Configura la salida de logs a un archivo
+  # Opciones: json, console, file
+  format: json
+
+  # Ruta del archivo de logs
+  filePath: /var/log/traefik/traefik.log
+
+
+# Habilita los logs de acceso para registrar todas las solicitudes entrantes
+# Útil para monitoreo y solución de problemas
+accessLog:
+  
+  # Configura la salida de logs de acceso a un archivo
+  # Opciones: json, console, file
+  filePath: /var/log/traefik/access.log
+
+  # Formato de logs de acceso
+  format: json
+
+  # Tamaño del búfer para almacenar logs de acceso
+  # Aumentar este valor puede mejorar el rendimiento
+  bufferingSize: 100
+  
+  # Campos específicos a incluir en los logs de acceso
+  fields:
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: keep
+        Authorization: drop
+        Content-Type: keep
+    clientUsername: drop
+
+# Métricas para monitoreo
+metrics:
+  
+  # Configuración para Prometheus
+  prometheus:
+    # Punto de entrada para las métricas
+    entryPoint: metrics
+    # Agrega etiquetas a los puntos de entrada
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0

@@ -1,0 +1,99 @@
+# =================================================================
+# Configuración Dinámica de Traefik
+# Versión: 1.0.0
+# Última actualización: 2025-03-02
+# Rendimiento: Optimizado para seguridad y velocidad
+# =================================================================
+# Esta configuración puede modificarse sin reiniciar Traefik
+# =================================================================
+
+# --- Configuración Global de TLS ---
+# Documentación: https://doc.traefik.io/traefik/https/tls/
+tls:
+  options:
+    default:
+      # Establece la versión mínima de TLS para garantizar conexiones seguras
+      # TLS 1.2 es el estándar mínimo recomendado para seguridad moderna
+      minVersion: "ТLS1.2"
+      
+      # Lista de cifrados seguros permitidos
+      # Estos cifrados proporcionan una seguridad fuerte y compatibilidad moderna
+      cipherSuites:
+        - "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"  # ~98.8% compatibilidad, más rápido
+        - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"    # ~98.7% compatibilidad
+        - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"  # ~98.8% compatibilidad, más seguro
+        - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"    # ~98.7% compatibilidad
+        - "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"   # Mejor para dispositivos ARM/móviles
+        - "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"     # Alternativa para dispositivos ARM
+        
+      # Curvas elípticas seguras
+      curvePreferences:
+        - "CurveP521"                                 # La más fuerte
+        - "CurveP384"                                 # Segunda más fuerte
+        - "CurveP256"                                 # Tercera más fuerte
+
+      # Preferencia de server cipher
+      preferServerCipherSuites: true
+
+      # Configuración más estricta para ciertos servicios
+      strict:
+        minVersion: "ТLS1.3"
+        sniStrict: true
+        cipherSuites:
+          - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"   # Cifrado fuerte
+          - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"     # Alternativa fuerte
+          - "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305"    # Cifrado rápido y seguro
+
+  # Configuración de certificados SSL
+  certificates:
+    # Ruta a los certificados generados por mkcert
+    # Estos archivos son montados por Docker desde el host
+      - certFile: "${SSL_CERT_PATH}"
+        keyFile: "${SSL_KEY_PATH}"
+        stores:
+          - default
+
+  # Almacenes de certificados
+  stores:
+    default:
+      defaultCertificate:
+        certFile: "${SSL_CERT_PATH}"
+        keyFile: "${SSL_KEY_PATH}"
+
+# --- Configuración de Enrutamiento HTTP ---
+http:
+  routers:
+    # Router para el panel de administración de Traefik
+    # El nombre 'dashboard' puede personalizarse según preferencias
+    ${TRAEFIK_DASHBOARD_ROUTER_NAME}:
+      # La regla de host utiliza variables del .env para mayor flexibilidad
+      rule: "Host(`${TRAEFIK_DOMAIN}`)"
+      # Conecta con el servicio interno de API de Traefik
+      service: "api@internal"
+      # Habilita TLS para acceso seguro HTTPS
+      tls: 
+        options: strict
+        certResolver: default
+      # Middlewares de seguridad aplicados al dashboard
+    middlewares:
+      - "${AUTH_MIDDLEWARE_NAME}" # Requiere autenticación
+      - "${SECURITY_HEADERS_MIDDLEWARE_NAME}" # Aplica headers de seguridad
+      - "${COMPRESS_MIDDLEWARE_NAME}" # Comprime respuestas HTTP
+    priority: 100 # Prioridad alta para asegurar acceso seguro
+    entryPoints:
+      - websecure
+
+  services:
+    # Definición de servicios personalizados
+    # Ejemplo de estructura para servicios adicionales:
+    ${SERVICE_NAME}:
+      loadBalancer:
+        servers:
+          # La URL se construye usando variables del .env
+          - url: "http://${SERVICE_HOST}:${SERVICE_PORT}"
+
+    # Puedes agregar más servicios siguiendo el mismo patrón:
+    # servicio-ejemplo:
+    #   loadBalancer:
+    #     servers:
+    #       - url: "http://${OTRO_SERVICIO_HOST}:${OTRO_SERVICIO_PORT}"
